@@ -37,7 +37,7 @@
                     </a>
                 </div>
                 <div class="settings-content col-lg-9 col-md-7">
-                    <div v-if="currentPage" class="settings-content-header">
+                    <div v-if="currentPage && subMenus[currentPage]" class="settings-content-header">
                         {{ subMenus[currentPage].title }}
                     </div>
                     <div class="mx-3">
@@ -84,49 +84,40 @@ export default {
         },
 
         subMenus() {
-            return {
-                general: {
-                    title: this.$t("General"),
-                },
-                appearance: {
-                    title: this.$t("Appearance"),
-                },
-                notifications: {
-                    title: this.$t("Notifications"),
-                },
-                "reverse-proxy": {
-                    title: this.$t("Reverse Proxy"),
-                },
-                tags: {
-                    title: this.$t("Tags"),
-                },
-                "monitor-history": {
-                    title: this.$t("Monitor History"),
-                },
-                "docker-hosts": {
-                    title: this.$t("Docker Hosts"),
-                },
-                "remote-browsers": {
-                    title: this.$t("Remote Browsers"),
-                },
-                security: {
-                    title: this.$t("Security"),
-                },
-                "api-keys": {
-                    title: this.$t("API Keys"),
-                },
-                proxies: {
-                    title: this.$t("Proxies"),
-                },
-                about: {
-                    title: this.$t("About"),
-                },
-            };
+            const isAdmin = this.$root.isAdmin;
+            const menus = {};
+
+            if (isAdmin) {
+                menus.general = { title: this.$t("General") };
+            }
+            menus.appearance = { title: this.$t("Appearance") };
+            if (isAdmin) {
+                menus.notifications = { title: this.$t("Notifications") };
+                menus["reverse-proxy"] = { title: this.$t("Reverse Proxy") };
+            }
+            menus.tags = { title: this.$t("Tags") };
+            if (isAdmin) {
+                menus["monitor-history"] = { title: this.$t("Monitor History") };
+                menus["docker-hosts"] = { title: this.$t("Docker Hosts") };
+                menus["remote-browsers"] = { title: this.$t("Remote Browsers") };
+            }
+            menus.security = { title: this.$t("Security") };
+            menus["api-keys"] = { title: this.$t("API Keys") };
+            menus.proxies = { title: this.$t("Proxies") };
+            menus.about = { title: this.$t("About") };
+
+            if (isAdmin) {
+                menus.users = { title: this.$t("Users") };
+            }
+            return menus;
         },
     },
 
     watch: {
         "$root.isMobile"() {
+            this.loadGeneralPage();
+        },
+        currentPage() {
             this.loadGeneralPage();
         },
     },
@@ -143,8 +134,18 @@ export default {
          * @returns {void}
          */
         loadGeneralPage() {
-            if (!this.currentPage && !this.$root.isMobile) {
-                this.$router.push("/settings/general");
+            if (this.$root.isMobile) {
+                return;
+            }
+            const keys = Object.keys(this.subMenus);
+            if (keys.length === 0) {
+                return;
+            }
+            if (!this.currentPage) {
+                this.$router.push(`/settings/${keys[0]}`);
+            } else if (!this.subMenus[this.currentPage]) {
+                // Current page is not available for this role; redirect to first visible tab
+                this.$router.replace(`/settings/${keys[0]}`);
             }
         },
 

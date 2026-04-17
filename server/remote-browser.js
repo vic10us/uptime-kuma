@@ -22,22 +22,26 @@ class RemoteBrowser {
      * @param {object} remoteBrowser Remote Browser to save
      * @param {?number} remoteBrowserID ID of the Remote Browser to update
      * @param {number} userID ID of the user who adds the Remote Browser
+     * @param root0
+     * @param root0.isAdmin
      * @returns {Promise<Bean>} Updated Remote Browser
      */
-    static async save(remoteBrowser, remoteBrowserID, userID) {
+    static async save(remoteBrowser, remoteBrowserID, userID, { isAdmin = false } = {}) {
         let bean;
 
         if (remoteBrowserID) {
-            bean = await R.findOne("remote_browser", " id = ? AND user_id = ? ", [remoteBrowserID, userID]);
+            bean = isAdmin
+                ? await R.findOne("remote_browser", " id = ? ", [remoteBrowserID])
+                : await R.findOne("remote_browser", " id = ? AND user_id = ? ", [remoteBrowserID, userID]);
 
             if (!bean) {
                 throw new Error("Remote browser not found");
             }
         } else {
             bean = R.dispense("remote_browser");
+            bean.user_id = userID;
         }
 
-        bean.user_id = userID;
         bean.name = remoteBrowser.name;
         bean.url = remoteBrowser.url;
 
@@ -50,10 +54,14 @@ class RemoteBrowser {
      * Delete a Remote Browser
      * @param {number} remoteBrowserID ID of the Remote Browser to delete
      * @param {number} userID ID of the user who created the Remote Browser
+     * @param root0
+     * @param root0.isAdmin
      * @returns {Promise<void>}
      */
-    static async delete(remoteBrowserID, userID) {
-        let bean = await R.findOne("remote_browser", " id = ? AND user_id = ? ", [remoteBrowserID, userID]);
+    static async delete(remoteBrowserID, userID, { isAdmin = false } = {}) {
+        let bean = isAdmin
+            ? await R.findOne("remote_browser", " id = ? ", [remoteBrowserID])
+            : await R.findOne("remote_browser", " id = ? AND user_id = ? ", [remoteBrowserID, userID]);
 
         if (!bean) {
             throw new Error("Remote Browser not found");

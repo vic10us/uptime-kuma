@@ -641,6 +641,34 @@ exports.checkLogin = (socket) => {
 };
 
 /**
+ * Check the socket user has one of the allowed roles.
+ * @param {Socket} socket Socket instance
+ * @param {string[]} allowed Allowed role names
+ * @returns {void}
+ * @throws The user is not logged in / does not have permission
+ */
+exports.checkRole = (socket, allowed) => {
+    exports.checkLogin(socket);
+    if (!allowed.includes(socket.userRole)) {
+        throw new Error("You do not have permission to perform this action.");
+    }
+};
+
+/**
+ * Check the socket user is an admin or editor.
+ * @param {Socket} socket Socket instance
+ * @returns {void}
+ */
+exports.checkEditor = (socket) => exports.checkRole(socket, [ "admin", "editor" ]);
+
+/**
+ * Check the socket user is an admin.
+ * @param {Socket} socket Socket instance
+ * @returns {void}
+ */
+exports.checkAdmin = (socket) => exports.checkRole(socket, [ "admin" ]);
+
+/**
  * For logged-in users, double-check the password
  * @param {Socket} socket Socket.io instance
  * @param {string} currentPassword Password to validate

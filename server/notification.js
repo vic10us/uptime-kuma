@@ -236,19 +236,24 @@ class Notification {
      * @param {object} notification Notification to save
      * @param {?number} notificationID ID of notification to update
      * @param {number} userID ID of user who adds notification
+     * @param {object} options Options bag
+     * @param {boolean} options.isAdmin Bypass ownership check when true
      * @returns {Promise<Bean>} Notification that was saved
      */
-    static async save(notification, notificationID, userID) {
+    static async save(notification, notificationID, userID, { isAdmin = false } = {}) {
         let bean;
 
         if (notificationID) {
-            bean = await R.findOne("notification", " id = ? AND user_id = ? ", [notificationID, userID]);
+            bean = isAdmin
+                ? await R.findOne("notification", " id = ? ", [notificationID])
+                : await R.findOne("notification", " id = ? AND user_id = ? ", [notificationID, userID]);
 
             if (!bean) {
                 throw new Error("notification not found");
             }
         } else {
             bean = R.dispense("notification");
+            bean.user_id = userID;
         }
 
         // applyExisting is one time only, don't save it to database.
@@ -256,13 +261,12 @@ class Notification {
         notification.applyExisting = false;
 
         bean.name = notification.name;
-        bean.user_id = userID;
         bean.config = JSON.stringify(notification);
         bean.is_default = notification.isDefault || false;
         await R.store(bean);
 
         if (applyExisting) {
-            await applyNotificationEveryMonitor(bean.id, userID);
+            await applyNotificationEveryMonitor(bean.id, bean.user_id);
         }
 
         return bean;
@@ -272,10 +276,14 @@ class Notification {
      * Delete a notification
      * @param {number} notificationID ID of notification to delete
      * @param {number} userID ID of user who created notification
+     * @param {object} options Options bag
+     * @param {boolean} options.isAdmin Bypass ownership check when true
      * @returns {Promise<void>}
      */
-    static async delete(notificationID, userID) {
-        let bean = await R.findOne("notification", " id = ? AND user_id = ? ", [notificationID, userID]);
+    static async delete(notificationID, userID, { isAdmin = false } = {}) {
+        let bean = isAdmin
+            ? await R.findOne("notification", " id = ? ", [notificationID])
+            : await R.findOne("notification", " id = ? AND user_id = ? ", [notificationID, userID]);
 
         if (!bean) {
             throw new Error("notification not found");

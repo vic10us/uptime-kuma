@@ -108,6 +108,8 @@ const {
     setting,
     initJWTSecret,
     checkLogin,
+    checkEditor,
+    checkAdmin,
     doubleCheckPassword,
     shake256,
     SHAKE256_LENGTH,
@@ -134,6 +136,13 @@ const passwordHash = require("./password-hash");
 
 const { Prometheus } = require("./prometheus");
 const { UptimeCalculator } = require("./uptime-calculator");
+const {
+    requireMonitorAccess,
+    canAccessMonitorBean,
+    accessibleMonitorIds,
+    getMonitorPermissions,
+    setMonitorPermissions,
+} = require("./monitor-access");
 
 const hostname = config.hostname;
 
@@ -184,6 +193,7 @@ const { proxySocketHandler } = require("./socket-handlers/proxy-socket-handler")
 const { dockerSocketHandler } = require("./socket-handlers/docker-socket-handler");
 const { maintenanceSocketHandler } = require("./socket-handlers/maintenance-socket-handler");
 const { apiKeySocketHandler } = require("./socket-handlers/api-key-socket-handler");
+const { userSocketHandler } = require("./socket-handlers/user-socket-handler");
 const { generalSocketHandler } = require("./socket-handlers/general-socket-handler");
 const { Settings } = require("./settings");
 const apicache = require("./modules/apicache");
@@ -406,6 +416,7 @@ let needSetup = false;
 
                     callback({
                         ok: true,
+                        role: socket.userRole,
                     });
                 } else {
                     log.info("auth", `Inactive or deleted user ${decoded.username}. IP=${clientIP}`);
@@ -460,6 +471,7 @@ let needSetup = false;
                     callback({
                         ok: true,
                         token: User.createJWT(user, server.jwtSecret),
+                        role: socket.userRole,
                     });
                 }
 
@@ -487,6 +499,7 @@ let needSetup = false;
                         callback({
                             ok: true,
                             token: User.createJWT(user, server.jwtSecret),
+                            role: socket.userRole,
                         });
                     } else {
                         log.warn("auth", `Invalid token provided for user ${data.username}. IP=${clientIP}`);
@@ -699,6 +712,7 @@ let needSetup = false;
                 let user = R.dispense("user");
                 user.username = username;
                 user.password = await passwordHash.generate(password);
+                user.role = "admin";
                 await R.store(user);
 
                 needSetup = false;
@@ -724,7 +738,7 @@ let needSetup = false;
         // Add a new monitor
         socket.on("add", async (monitor, callback) => {
             try {
-                checkLogin(socket);
+                checkEditor(socket);
                 let bean = R.dispense("monitor");
 
                 let notificationIDList = monitor.notificationIDList;
@@ -800,13 +814,9 @@ let needSetup = false;
         socket.on("editMonitor", async (monitor, callback) => {
             try {
                 let removeGroupChildren = false;
-                checkLogin(socket);
+                checkEditor(socket);
 
-                let bean = await R.findOne("monitor", " id = ? ", [monitor.id]);
-
-                if (bean.user_id !== socket.userID) {
-                    throw new Error("Permission denied.");
-                }
+                let bean = await requireMonitorAccess(socket, monitor.id, "edit");
 
                 // Check if Parent is Descendant (would cause endless loop)
                 if (monitor.parent !== null) {
@@ -948,7 +958,7 @@ let needSetup = false;
                 await updateMonitorNotification(bean.id, monitor.notificationIDList);
 
                 if (await Monitor.isActive(bean.id, bean.active)) {
-                    await restartMonitor(socket.userID, bean.id);
+                    await restartMonitor(socket.userID, bean.id, { isAdmin: true });
                 }
 
                 await server.sendUpdateMonitorIntoList(socket, bean.id);
@@ -990,12 +1000,14 @@ let needSetup = false;
 
                 log.info("monitor", `Get Monitor: ${monitorID} User ID: ${socket.userID}`);
 
-                let monitor = await R.findOne("monitor", " id = ? AND user_id = ? ", [monitorID, socket.userID]);
+                const monitor = await requireMonitorAccess(socket, monitorID, "view");
                 const monitorData = [{ id: monitor.id, active: monitor.active }];
                 const preloadData = await Monitor.preparePreloadData(monitorData);
+                const json = monitor.toJSON(preloadData);
+                json.canEdit = await canAccessMonitorBean(socket, monitor, "edit");
                 callback({
                     ok: true,
-                    monitor: monitor.toJSON(preloadData),
+                    monitor: json,
                 });
             } catch (e) {
                 callback({
@@ -1036,6 +1048,8 @@ let needSetup = false;
                     throw new Error("Invalid period.");
                 }
 
+                await requireMonitorAccess(socket, monitorID, "view");
+
                 const sqlHourOffset = Database.sqlHourOffset();
 
                 let list = await R.getAll(
@@ -1064,8 +1078,9 @@ let needSetup = false;
         // Start or Resume the monitor
         socket.on("resumeMonitor", async (monitorID, callback) => {
             try {
-                checkLogin(socket);
-                await startMonitor(socket.userID, monitorID);
+                checkEditor(socket);
+                await requireMonitorAccess(socket, monitorID, "edit");
+                await startMonitor(socket.userID, monitorID, { isAdmin: true });
                 await server.sendUpdateMonitorIntoList(socket, monitorID);
 
                 callback({
@@ -1081,10 +1096,46 @@ let needSetup = false;
             }
         });
 
-        socket.on("pauseMonitor", async (monitorID, callback) => {
+        socket.on("getMonitorPermissions", async (monitorID, callback) => {
+            try {
+                checkEditor(socket);
+                await requireMonitorAccess(socket, monitorID, "edit");
+                const perms = await getMonitorPermissions(monitorID);
+                callback({ ok: true, permissions: perms });
+            } catch (e) {
+                callback({ ok: false, msg: e.message });
+            }
+        });
+
+        socket.on("setMonitorPermissions", async (monitorID, permissions, callback) => {
+            try {
+                checkEditor(socket);
+                await requireMonitorAccess(socket, monitorID, "edit");
+                await setMonitorPermissions(monitorID, permissions || {});
+                await server.sendUpdateMonitorIntoList(socket, monitorID);
+                callback({ ok: true, msg: "Saved.", msgi18n: true });
+            } catch (e) {
+                callback({ ok: false, msg: e.message });
+            }
+        });
+
+        socket.on("listUsersForPermissions", async (callback) => {
             try {
                 checkLogin(socket);
-                await pauseMonitor(socket.userID, monitorID);
+                const users = await R.getAll(
+                    "SELECT id, username FROM `user` WHERE active = 1 ORDER BY username ASC"
+                );
+                callback({ ok: true, users });
+            } catch (e) {
+                callback({ ok: false, msg: e.message });
+            }
+        });
+
+        socket.on("pauseMonitor", async (monitorID, callback) => {
+            try {
+                checkEditor(socket);
+                await requireMonitorAccess(socket, monitorID, "edit");
+                await pauseMonitor(socket.userID, monitorID, { isAdmin: true });
                 await server.sendUpdateMonitorIntoList(socket, monitorID);
 
                 callback({
@@ -1108,12 +1159,13 @@ let needSetup = false;
                     deleteChildren = false;
                 }
 
-                checkLogin(socket);
+                checkEditor(socket);
 
                 const startTime = Date.now();
 
-                // Check if this is a group monitor
-                const monitor = await R.findOne("monitor", " id = ? AND user_id = ? ", [monitorID, socket.userID]);
+                // Check access and load the monitor
+                const monitor = await requireMonitorAccess(socket, monitorID, "edit");
+                const isAdmin = true;
 
                 // Log with context about deletion type
                 if (monitor && monitor.type === "group") {
@@ -1134,7 +1186,7 @@ let needSetup = false;
                         // Delete all child monitors recursively
                         if (children && children.length > 0) {
                             for (const child of children) {
-                                await Monitor.deleteMonitorRecursively(child.id, socket.userID);
+                                await Monitor.deleteMonitorRecursively(child.id, socket.userID, { isAdmin });
                                 await server.sendDeleteMonitorFromList(socket, child.id);
                             }
                         }
@@ -1152,7 +1204,7 @@ let needSetup = false;
                 }
 
                 // Delete the monitor itself
-                await Monitor.deleteMonitor(monitorID, socket.userID);
+                await Monitor.deleteMonitor(monitorID, socket.userID, { isAdmin });
 
                 // Fix #2880
                 apicache.clear();
@@ -1210,7 +1262,7 @@ let needSetup = false;
 
         socket.on("addTag", async (tag, callback) => {
             try {
-                checkLogin(socket);
+                checkEditor(socket);
 
                 let bean = R.dispense("tag");
                 bean.name = tag.name;
@@ -1231,7 +1283,7 @@ let needSetup = false;
 
         socket.on("editTag", async (tag, callback) => {
             try {
-                checkLogin(socket);
+                checkEditor(socket);
 
                 let bean = await R.findOne("tag", " id = ? ", [tag.id]);
                 if (bean == null) {
@@ -1262,7 +1314,7 @@ let needSetup = false;
 
         socket.on("deleteTag", async (tagID, callback) => {
             try {
-                checkLogin(socket);
+                checkEditor(socket);
 
                 await R.exec("DELETE FROM tag WHERE id = ? ", [tagID]);
 
@@ -1281,7 +1333,7 @@ let needSetup = false;
 
         socket.on("addMonitorTag", async (tagID, monitorID, value, callback) => {
             try {
-                checkLogin(socket);
+                checkEditor(socket);
 
                 await R.exec("INSERT INTO monitor_tag (tag_id, monitor_id, value) VALUES (?, ?, ?)", [
                     tagID,
@@ -1306,7 +1358,7 @@ let needSetup = false;
 
         socket.on("editMonitorTag", async (tagID, monitorID, value, callback) => {
             try {
-                checkLogin(socket);
+                checkEditor(socket);
 
                 await R.exec("UPDATE monitor_tag SET value = ? WHERE tag_id = ? AND monitor_id = ?", [
                     value,
@@ -1331,7 +1383,7 @@ let needSetup = false;
 
         socket.on("deleteMonitorTag", async (tagID, monitorID, value, callback) => {
             try {
-                checkLogin(socket);
+                checkEditor(socket);
 
                 await R.exec("DELETE FROM monitor_tag WHERE tag_id = ? AND monitor_id = ? AND value = ?", [
                     tagID,
@@ -1358,9 +1410,24 @@ let needSetup = false;
             try {
                 checkLogin(socket);
 
+                if (monitorID != null) {
+                    await requireMonitorAccess(socket, monitorID, "view");
+                }
+
                 let count;
                 if (monitorID == null) {
-                    count = await R.count("heartbeat", "important = 1");
+                    const access = await accessibleMonitorIds(socket, "view");
+                    if (access.all) {
+                        count = await R.count("heartbeat", "important = 1");
+                    } else if (access.ids.length === 0) {
+                        count = 0;
+                    } else {
+                        const placeholders = access.ids.map(() => "?").join(",");
+                        count = (await R.getRow(
+                            `SELECT COUNT(id) AS c FROM heartbeat WHERE important = 1 AND monitor_id IN (${placeholders})`,
+                            access.ids
+                        )).c;
+                    }
                 } else {
                     count = await R.count("heartbeat", "monitor_id = ? AND important = 1", [monitorID]);
                 }
@@ -1381,18 +1448,35 @@ let needSetup = false;
             try {
                 checkLogin(socket);
 
+                if (monitorID != null) {
+                    await requireMonitorAccess(socket, monitorID, "view");
+                }
+
                 let list;
                 if (monitorID == null) {
-                    list = await R.find(
-                        "heartbeat",
-                        `
-                        important = 1
-                        ORDER BY time DESC
-                        LIMIT ?
-                        OFFSET ?
-                    `,
-                        [count, offset]
-                    );
+                    const access = await accessibleMonitorIds(socket, "view");
+                    if (access.all) {
+                        list = await R.find(
+                            "heartbeat",
+                            `
+                            important = 1
+                            ORDER BY time DESC
+                            LIMIT ?
+                            OFFSET ?
+                        `,
+                            [ count, offset ]
+                        );
+                    } else if (access.ids.length === 0) {
+                        list = [];
+                    } else {
+                        const placeholders = access.ids.map(() => "?").join(",");
+                        list = await R.convertToBeans("heartbeat", await R.getAll(
+                            `SELECT * FROM heartbeat
+                             WHERE important = 1 AND monitor_id IN (${placeholders})
+                             ORDER BY time DESC LIMIT ? OFFSET ?`,
+                            [ ...access.ids, count, offset ]
+                        ));
+                    }
                 } else {
                     list = await R.find(
                         "heartbeat",
@@ -1403,7 +1487,7 @@ let needSetup = false;
                         LIMIT ?
                         OFFSET ?
                     `,
-                        [monitorID, count, offset]
+                        [ monitorID, count, offset ]
                     );
                 }
 
@@ -1474,7 +1558,7 @@ let needSetup = false;
 
         socket.on("setSettings", async (data, currentPassword, callback) => {
             try {
-                checkLogin(socket);
+                checkAdmin(socket);
 
                 // If currently is disabled auth, don't need to check
                 // Disabled Auth + Want to Disable Auth => No Check
@@ -1537,9 +1621,9 @@ let needSetup = false;
         // Add or Edit
         socket.on("addNotification", async (notification, notificationID, callback) => {
             try {
-                checkLogin(socket);
+                checkEditor(socket);
 
-                let notificationBean = await Notification.save(notification, notificationID, socket.userID);
+                let notificationBean = await Notification.save(notification, notificationID, socket.userID, { isAdmin: socket.userRole === "admin" });
                 await sendNotificationList(socket);
 
                 callback({
@@ -1558,9 +1642,9 @@ let needSetup = false;
 
         socket.on("deleteNotification", async (notificationID, callback) => {
             try {
-                checkLogin(socket);
+                checkEditor(socket);
 
-                await Notification.delete(notificationID, socket.userID);
+                await Notification.delete(notificationID, socket.userID, { isAdmin: socket.userRole === "admin" });
                 await sendNotificationList(socket);
 
                 callback({
@@ -1578,7 +1662,7 @@ let needSetup = false;
 
         socket.on("testNotification", async (notification, callback) => {
             try {
-                checkLogin(socket);
+                checkEditor(socket);
 
                 let msg = await Notification.send(notification, notification.name + " Testing");
 
@@ -1633,7 +1717,8 @@ let needSetup = false;
 
         socket.on("clearEvents", async (monitorID, callback) => {
             try {
-                checkLogin(socket);
+                checkEditor(socket);
+                await requireMonitorAccess(socket, monitorID, "edit");
 
                 log.info("manage", `Clear Events Monitor: ${monitorID} User ID: ${socket.userID}`);
 
@@ -1652,7 +1737,8 @@ let needSetup = false;
 
         socket.on("clearHeartbeats", async (monitorID, callback) => {
             try {
-                checkLogin(socket);
+                checkEditor(socket);
+                await requireMonitorAccess(socket, monitorID, "edit");
 
                 log.info("manage", `Clear Heartbeats Monitor: ${monitorID} User ID: ${socket.userID}`);
 
@@ -1661,7 +1747,7 @@ let needSetup = false;
                 if (monitorID in server.monitorList) {
                     const monitor = server.monitorList[monitorID];
                     if (monitor.active) {
-                        await restartMonitor(socket.userID, monitorID);
+                        await restartMonitor(socket.userID, monitorID, { isAdmin: true });
                     }
                 }
 
@@ -1680,7 +1766,7 @@ let needSetup = false;
 
         socket.on("clearStatistics", async (callback) => {
             try {
-                checkLogin(socket);
+                checkAdmin(socket);
 
                 log.info("manage", `Clear Statistics User ID: ${socket.userID}`);
 
@@ -1690,7 +1776,7 @@ let needSetup = false;
                 for (let monitorID in server.monitorList) {
                     const monitor = server.monitorList[monitorID];
                     if (monitor.active) {
-                        await restartMonitor(socket.userID, monitorID);
+                        await restartMonitor(socket.userID, monitorID, { isAdmin: true });
                     }
                 }
 
@@ -1713,6 +1799,7 @@ let needSetup = false;
         dockerSocketHandler(socket);
         maintenanceSocketHandler(socket);
         apiKeySocketHandler(socket);
+        userSocketHandler(socket);
         remoteBrowserSocketHandler(socket);
         generalSocketHandler(socket, server);
         chartSocketHandler(socket);
@@ -1727,7 +1814,7 @@ let needSetup = false;
         if (await setting("disableAuth")) {
             log.info("auth", "Disabled Auth: auto login to admin");
             await afterLogin(socket, await R.findOne("user"));
-            socket.emit("autoLogin");
+            socket.emit("autoLogin", { role: socket.userRole });
         } else {
             socket.emit("loginRequired");
             log.debug("auth", "need auth");
@@ -1783,10 +1870,20 @@ async function updateMonitorNotification(monitorID, notificationIDList) {
  * Check if a given user owns a specific monitor
  * @param {number} userID ID of user to check
  * @param {number} monitorID ID of monitor to check
+ * @param root0
+ * @param root0.isAdmin
  * @returns {Promise<void>}
  * @throws {Error} The specified user does not own the monitor
  */
-async function checkOwner(userID, monitorID) {
+async function checkOwner(userID, monitorID, { isAdmin = false } = {}) {
+    if (isAdmin) {
+        let row = await R.getRow("SELECT id FROM monitor WHERE id = ? ", [monitorID]);
+        if (!row) {
+            throw new Error("Monitor not found.");
+        }
+        return;
+    }
+
     let row = await R.getRow("SELECT id FROM monitor WHERE id = ? AND user_id = ? ", [monitorID, userID]);
 
     if (!row) {
@@ -1803,6 +1900,7 @@ async function checkOwner(userID, monitorID) {
  */
 async function afterLogin(socket, user) {
     socket.userID = user.id;
+    socket.userRole = user.role || "viewer";
     socket.join(user.id);
 
     let monitorList = await server.sendMonitorList(socket);
@@ -1872,14 +1970,20 @@ async function initDatabase(testMode = false) {
  * Start the specified monitor
  * @param {number} userID ID of user who owns monitor
  * @param {number} monitorID ID of monitor to start
+ * @param root0
+ * @param root0.isAdmin
  * @returns {Promise<void>}
  */
-async function startMonitor(userID, monitorID) {
-    await checkOwner(userID, monitorID);
+async function startMonitor(userID, monitorID, { isAdmin = false } = {}) {
+    await checkOwner(userID, monitorID, { isAdmin });
 
     log.info("manage", `Resume Monitor: ${monitorID} User ID: ${userID}`);
 
-    await R.exec("UPDATE monitor SET active = 1 WHERE id = ? AND user_id = ? ", [monitorID, userID]);
+    if (isAdmin) {
+        await R.exec("UPDATE monitor SET active = 1 WHERE id = ? ", [monitorID]);
+    } else {
+        await R.exec("UPDATE monitor SET active = 1 WHERE id = ? AND user_id = ? ", [monitorID, userID]);
+    }
 
     let monitor = await R.findOne("monitor", " id = ? ", [monitorID]);
 
@@ -1895,24 +1999,31 @@ async function startMonitor(userID, monitorID) {
  * Restart a given monitor
  * @param {number} userID ID of user who owns monitor
  * @param {number} monitorID ID of monitor to start
+ * @param options
  * @returns {Promise<void>}
  */
-async function restartMonitor(userID, monitorID) {
-    return await startMonitor(userID, monitorID);
+async function restartMonitor(userID, monitorID, options = {}) {
+    return await startMonitor(userID, monitorID, options);
 }
 
 /**
  * Pause a given monitor
  * @param {number} userID ID of user who owns monitor
  * @param {number} monitorID ID of monitor to start
+ * @param root0
+ * @param root0.isAdmin
  * @returns {Promise<void>}
  */
-async function pauseMonitor(userID, monitorID) {
-    await checkOwner(userID, monitorID);
+async function pauseMonitor(userID, monitorID, { isAdmin = false } = {}) {
+    await checkOwner(userID, monitorID, { isAdmin });
 
     log.info("manage", `Pause Monitor: ${monitorID} User ID: ${userID}`);
 
-    await R.exec("UPDATE monitor SET active = 0 WHERE id = ? AND user_id = ? ", [monitorID, userID]);
+    if (isAdmin) {
+        await R.exec("UPDATE monitor SET active = 0 WHERE id = ? ", [monitorID]);
+    } else {
+        await R.exec("UPDATE monitor SET active = 0 WHERE id = ? AND user_id = ? ", [monitorID, userID]);
+    }
 
     if (monitorID in server.monitorList) {
         await server.monitorList[monitorID].stop();

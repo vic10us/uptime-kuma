@@ -1,5 +1,5 @@
 const { sendDockerHostList } = require("../client");
-const { checkLogin } = require("../util-server");
+const { checkEditor } = require("../util-server");
 const { DockerHost } = require("../docker");
 const { log } = require("../../src/util");
 
@@ -11,9 +11,9 @@ const { log } = require("../../src/util");
 module.exports.dockerSocketHandler = (socket) => {
     socket.on("addDockerHost", async (dockerHost, dockerHostID, callback) => {
         try {
-            checkLogin(socket);
+            checkEditor(socket);
 
-            let dockerHostBean = await DockerHost.save(dockerHost, dockerHostID, socket.userID);
+            let dockerHostBean = await DockerHost.save(dockerHost, dockerHostID, socket.userID, { isAdmin: socket.userRole === "admin" });
             await sendDockerHostList(socket);
 
             callback({
@@ -32,9 +32,9 @@ module.exports.dockerSocketHandler = (socket) => {
 
     socket.on("deleteDockerHost", async (dockerHostID, callback) => {
         try {
-            checkLogin(socket);
+            checkEditor(socket);
 
-            await DockerHost.delete(dockerHostID, socket.userID);
+            await DockerHost.delete(dockerHostID, socket.userID, { isAdmin: socket.userRole === "admin" });
             await sendDockerHostList(socket);
 
             callback({
@@ -52,7 +52,7 @@ module.exports.dockerSocketHandler = (socket) => {
 
     socket.on("testDockerHost", async (dockerHost, callback) => {
         try {
-            checkLogin(socket);
+            checkEditor(socket);
 
             let amount = await DockerHost.testDockerHost(dockerHost);
             let msg;

@@ -160,6 +160,9 @@ class Monitor extends BeanModel {
             packetSize: this.packetSize,
             maxredirects: this.maxredirects,
             accepted_statuscodes: this.getAcceptedStatuscodes(),
+            visibility: this.visibility || null,
+            edit_access: this.edit_access || null,
+            owner_user_id: this.user_id,
             dns_resolve_type: this.dns_resolve_type,
             dns_resolve_server: this.dns_resolve_server,
             dns_last_result: this.dns_last_result,
@@ -2007,9 +2010,11 @@ class Monitor extends BeanModel {
      * Delete a monitor from the system
      * @param {number} monitorID ID of the monitor to delete
      * @param {number} userID ID of the user who owns the monitor
+     * @param {object} options Options bag
+     * @param {boolean} options.isAdmin Bypass ownership check when true
      * @returns {Promise<void>}
      */
-    static async deleteMonitor(monitorID, userID) {
+    static async deleteMonitor(monitorID, userID, { isAdmin = false } = {}) {
         const server = UptimeKumaServer.getInstance();
 
         // Stop the monitor if it's running
@@ -2019,31 +2024,39 @@ class Monitor extends BeanModel {
         }
 
         // Delete from database
-        await R.exec("DELETE FROM monitor WHERE id = ? AND user_id = ? ", [monitorID, userID]);
+        if (isAdmin) {
+            await R.exec("DELETE FROM monitor WHERE id = ? ", [monitorID]);
+        } else {
+            await R.exec("DELETE FROM monitor WHERE id = ? AND user_id = ? ", [monitorID, userID]);
+        }
     }
 
     /**
      * Recursively delete a monitor and all its descendants
      * @param {number} monitorID ID of the monitor to delete
      * @param {number} userID ID of the user who owns the monitor
+     * @param {object} options Options, e.g. isAdmin to bypass ownership
+     * @param options.isAdmin
      * @returns {Promise<void>}
      */
-    static async deleteMonitorRecursively(monitorID, userID) {
+    static async deleteMonitorRecursively(monitorID, userID, { isAdmin = false } = {}) {
         // Check if this monitor is a group
-        const monitor = await R.findOne("monitor", " id = ? AND user_id = ? ", [monitorID, userID]);
+        const monitor = isAdmin
+            ? await R.findOne("monitor", " id = ? ", [monitorID])
+            : await R.findOne("monitor", " id = ? AND user_id = ? ", [monitorID, userID]);
 
         if (monitor && monitor.type === "group") {
             // Get all children and delete them recursively
             const children = await Monitor.getChildren(monitorID);
             if (children && children.length > 0) {
                 for (const child of children) {
-                    await Monitor.deleteMonitorRecursively(child.id, userID);
+                    await Monitor.deleteMonitorRecursively(child.id, userID, { isAdmin });
                 }
             }
         }
 
         // Delete the monitor itself
-        await Monitor.deleteMonitor(monitorID, userID);
+        await Monitor.deleteMonitor(monitorID, userID, { isAdmin });
     }
 
     /**

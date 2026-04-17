@@ -38,6 +38,7 @@ export default {
                 initedSocketIO: false,
             },
             username: null,
+            userRole: null,
             remember: localStorage.remember !== "0",
             allowLoginDialog: false, // Allowed to show login dialog, but "loggedIn" have to be true too. This exists because prevent the login dialog show 0.1s in first before the socket server auth-ed.
             loggedIn: false,
@@ -127,11 +128,12 @@ export default {
                 this.$router.push("/setup");
             });
 
-            socket.on("autoLogin", (monitorID, data) => {
+            socket.on("autoLogin", (data) => {
                 this.loggedIn = true;
                 this.storage().token = "autoLogin";
                 this.socket.token = "autoLogin";
                 this.allowLoginDialog = false;
+                this.userRole = data?.role || "admin";
             });
 
             socket.on("loginRequired", () => {
@@ -427,6 +429,7 @@ export default {
                         this.socket.token = res.token;
                         this.loggedIn = true;
                         this.username = this.getJWTPayload()?.username;
+                        this.userRole = res.role || null;
 
                         // Trigger Chrome Save Password
                         history.pushState({}, "");
@@ -451,6 +454,7 @@ export default {
                 } else {
                     this.loggedIn = true;
                     this.username = this.getJWTPayload()?.username;
+                    this.userRole = res.role || null;
                 }
             });
         },
@@ -465,6 +469,7 @@ export default {
             this.socket.token = null;
             this.loggedIn = false;
             this.username = null;
+            this.userRole = null;
             this.clearData();
         },
 
@@ -739,6 +744,14 @@ export default {
             } else {
                 return "🐻";
             }
+        },
+
+        isAdmin() {
+            return this.userRole === "admin";
+        },
+
+        canEdit() {
+            return this.userRole === "admin" || this.userRole === "editor";
         },
 
         lastHeartbeatList() {

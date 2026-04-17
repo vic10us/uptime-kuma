@@ -1,4 +1,4 @@
-const { checkLogin } = require("../util-server");
+const { checkLogin, checkAdmin } = require("../util-server");
 const Database = require("../database");
 
 /**
@@ -25,7 +25,7 @@ module.exports.databaseSocketHandler = (socket) => {
 
     socket.on("shrinkDatabase", async (callback) => {
         try {
-            checkLogin(socket);
+            checkAdmin(socket);
             await Database.shrink();
             callback({
                 ok: true,

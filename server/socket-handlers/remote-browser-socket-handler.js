@@ -1,5 +1,5 @@
 const { sendRemoteBrowserList } = require("../client");
-const { checkLogin } = require("../util-server");
+const { checkEditor } = require("../util-server");
 const { RemoteBrowser } = require("../remote-browser");
 
 const { log } = require("../../src/util");
@@ -13,9 +13,9 @@ const { testRemoteBrowser } = require("../monitor-types/real-browser-monitor-typ
 module.exports.remoteBrowserSocketHandler = (socket) => {
     socket.on("addRemoteBrowser", async (remoteBrowser, remoteBrowserID, callback) => {
         try {
-            checkLogin(socket);
+            checkEditor(socket);
 
-            let remoteBrowserBean = await RemoteBrowser.save(remoteBrowser, remoteBrowserID, socket.userID);
+            let remoteBrowserBean = await RemoteBrowser.save(remoteBrowser, remoteBrowserID, socket.userID, { isAdmin: socket.userRole === "admin" });
             await sendRemoteBrowserList(socket);
 
             callback({
@@ -34,9 +34,9 @@ module.exports.remoteBrowserSocketHandler = (socket) => {
 
     socket.on("deleteRemoteBrowser", async (dockerHostID, callback) => {
         try {
-            checkLogin(socket);
+            checkEditor(socket);
 
-            await RemoteBrowser.delete(dockerHostID, socket.userID);
+            await RemoteBrowser.delete(dockerHostID, socket.userID, { isAdmin: socket.userRole === "admin" });
             await sendRemoteBrowserList(socket);
 
             callback({
@@ -54,7 +54,7 @@ module.exports.remoteBrowserSocketHandler = (socket) => {
 
     socket.on("testRemoteBrowser", async (remoteBrowser, callback) => {
         try {
-            checkLogin(socket);
+            checkEditor(socket);
             let check = await testRemoteBrowser(remoteBrowser.url);
             log.info("remoteBrowser", "Tested remote browser: " + check);
             let msg;

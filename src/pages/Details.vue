@@ -108,7 +108,7 @@
                 </span>
             </p>
 
-            <div class="functions">
+            <div v-if="monitor.canEdit" class="functions">
                 <div class="btn-group" role="group">
                     <button v-if="monitor.active" class="btn btn-normal" @click="pauseDialog">
                         <font-awesome-icon icon="pause" />

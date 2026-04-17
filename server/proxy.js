@@ -15,19 +15,24 @@ class Proxy {
      * @param {object} proxy Proxy to store
      * @param {number} proxyID ID of proxy to update
      * @param {number} userID ID of user the proxy belongs to
+     * @param root0
+     * @param root0.isAdmin
      * @returns {Promise<Bean>} Updated proxy
      */
-    static async save(proxy, proxyID, userID) {
+    static async save(proxy, proxyID, userID, { isAdmin = false } = {}) {
         let bean;
 
         if (proxyID) {
-            bean = await R.findOne("proxy", " id = ? AND user_id = ? ", [proxyID, userID]);
+            bean = isAdmin
+                ? await R.findOne("proxy", " id = ? ", [proxyID])
+                : await R.findOne("proxy", " id = ? AND user_id = ? ", [proxyID, userID]);
 
             if (!bean) {
                 throw new Error("proxy not found");
             }
         } else {
             bean = R.dispense("proxy");
+            bean.user_id = userID;
         }
 
         // Make sure given proxy protocol is supported
@@ -42,7 +47,6 @@ class Proxy {
             await R.exec("UPDATE proxy SET `default` = 0 WHERE `default` = 1");
         }
 
-        bean.user_id = userID;
         bean.protocol = proxy.protocol;
         bean.host = proxy.host;
         bean.port = proxy.port;
@@ -55,7 +59,7 @@ class Proxy {
         await R.store(bean);
 
         if (proxy.applyExisting) {
-            await applyProxyEveryMonitor(bean.id, userID);
+            await applyProxyEveryMonitor(bean.id, bean.user_id);
         }
 
         return bean;
@@ -65,10 +69,14 @@ class Proxy {
      * Deletes proxy with given id and removes it from monitors
      * @param {number} proxyID ID of proxy to delete
      * @param {number} userID ID of proxy owner
+     * @param root0
+     * @param root0.isAdmin
      * @returns {Promise<void>}
      */
-    static async delete(proxyID, userID) {
-        const bean = await R.findOne("proxy", " id = ? AND user_id = ? ", [proxyID, userID]);
+    static async delete(proxyID, userID, { isAdmin = false } = {}) {
+        const bean = isAdmin
+            ? await R.findOne("proxy", " id = ? ", [proxyID])
+            : await R.findOne("proxy", " id = ? AND user_id = ? ", [proxyID, userID]);
 
         if (!bean) {
             throw new Error("proxy not found");

@@ -16,22 +16,25 @@ class DockerHost {
      * @param {object} dockerHost Docker host to save
      * @param {?number} dockerHostID ID of the docker host to update
      * @param {number} userID ID of the user who adds the docker host
+     * @param root0
+     * @param root0.isAdmin
      * @returns {Promise<Bean>} Updated docker host
      */
-    static async save(dockerHost, dockerHostID, userID) {
+    static async save(dockerHost, dockerHostID, userID, { isAdmin = false } = {}) {
         let bean;
 
         if (dockerHostID) {
-            bean = await R.findOne("docker_host", " id = ? AND user_id = ? ", [dockerHostID, userID]);
+            bean = isAdmin
+                ? await R.findOne("docker_host", " id = ? ", [dockerHostID])
+                : await R.findOne("docker_host", " id = ? AND user_id = ? ", [dockerHostID, userID]);
 
             if (!bean) {
                 throw new Error("docker host not found");
             }
         } else {
             bean = R.dispense("docker_host");
+            bean.user_id = userID;
         }
-
-        bean.user_id = userID;
         bean.docker_daemon = dockerHost.dockerDaemon;
         bean.docker_type = dockerHost.dockerType;
         bean.name = dockerHost.name;
@@ -45,10 +48,14 @@ class DockerHost {
      * Delete a Docker host
      * @param {number} dockerHostID ID of the Docker host to delete
      * @param {number} userID ID of the user who created the Docker host
+     * @param root0
+     * @param root0.isAdmin
      * @returns {Promise<void>}
      */
-    static async delete(dockerHostID, userID) {
-        let bean = await R.findOne("docker_host", " id = ? AND user_id = ? ", [dockerHostID, userID]);
+    static async delete(dockerHostID, userID, { isAdmin = false } = {}) {
+        let bean = isAdmin
+            ? await R.findOne("docker_host", " id = ? ", [dockerHostID])
+            : await R.findOne("docker_host", " id = ? AND user_id = ? ", [dockerHostID, userID]);
 
         if (!bean) {
             throw new Error("docker host not found");

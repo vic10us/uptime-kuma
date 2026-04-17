@@ -1,4 +1,4 @@
-const { checkLogin } = require("../util-server");
+const { checkLogin, checkEditor } = require("../util-server");
 const { log } = require("../../src/util");
 const { R } = require("redbean-node");
 const { nanoid } = require("nanoid");
@@ -17,7 +17,7 @@ module.exports.apiKeySocketHandler = (socket) => {
     // Add a new api key
     socket.on("addAPIKey", async (key, callback) => {
         try {
-            checkLogin(socket);
+            checkEditor(socket);
 
             let clearKey = nanoid(40);
             let hashedKey = await passwordHash.generate(clearKey);
@@ -69,11 +69,15 @@ module.exports.apiKeySocketHandler = (socket) => {
 
     socket.on("deleteAPIKey", async (keyID, callback) => {
         try {
-            checkLogin(socket);
+            checkEditor(socket);
 
             log.debug("apikeys", `Deleted API Key: ${keyID} User ID: ${socket.userID}`);
 
-            await R.exec("DELETE FROM api_key WHERE id = ? AND user_id = ? ", [keyID, socket.userID]);
+            if (socket.userRole === "admin") {
+                await R.exec("DELETE FROM api_key WHERE id = ? ", [keyID]);
+            } else {
+                await R.exec("DELETE FROM api_key WHERE id = ? AND user_id = ? ", [keyID, socket.userID]);
+            }
 
             apicache.clear();
 
@@ -94,9 +98,17 @@ module.exports.apiKeySocketHandler = (socket) => {
 
     socket.on("disableAPIKey", async (keyID, callback) => {
         try {
-            checkLogin(socket);
+            checkEditor(socket);
 
             log.debug("apikeys", `Disabled Key: ${keyID} User ID: ${socket.userID}`);
+
+            const key = await R.findOne("api_key", " id = ? ", [keyID]);
+            if (!key) {
+                throw new Error("API key not found.");
+            }
+            if (socket.userRole !== "admin" && key.user_id !== socket.userID) {
+                throw new Error("Permission denied.");
+            }
 
             await R.exec("UPDATE api_key SET active = 0 WHERE id = ? ", [keyID]);
 
@@ -119,9 +131,17 @@ module.exports.apiKeySocketHandler = (socket) => {
 
     socket.on("enableAPIKey", async (keyID, callback) => {
         try {
-            checkLogin(socket);
+            checkEditor(socket);
 
             log.debug("apikeys", `Enabled Key: ${keyID} User ID: ${socket.userID}`);
+
+            const key = await R.findOne("api_key", " id = ? ", [keyID]);
+            if (!key) {
+                throw new Error("API key not found.");
+            }
+            if (socket.userRole !== "admin" && key.user_id !== socket.userID) {
+                throw new Error("Permission denied.");
+            }
 
             await R.exec("UPDATE api_key SET active = 1 WHERE id = ? ", [keyID]);
 

@@ -67,6 +67,9 @@
                                 <span v-if="$root.username == null" class="dropdown-item-text">
                                     {{ $t("signedInDispDisabled") }}
                                 </span>
+                                <span v-if="$root.userRole" class="dropdown-item-text role-badge">
+                                    {{ $t($root.userRole === "admin" ? "Admin" : $root.userRole === "editor" ? "Editor" : "Viewer") }}
+                                </span>
                             </li>
 
                             <li><hr class="dropdown-divider" /></li>
@@ -143,7 +146,7 @@
                 {{ $t("List") }}
             </router-link>
 
-            <router-link to="/add" class="nav-link">
+            <router-link v-if="$root.canEdit" to="/add" class="nav-link">
                 <div><font-awesome-icon icon="plus" /></div>
                 {{ $t("Add") }}
             </router-link>

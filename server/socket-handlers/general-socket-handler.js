@@ -1,7 +1,7 @@
 const { log } = require("../../src/util");
 const { Settings } = require("../settings");
 const { sendInfo } = require("../client");
-const { checkLogin } = require("../util-server");
+const { checkLogin, checkAdmin } = require("../util-server");
 const { games } = require("gamedig");
 const { testChrome } = require("../monitor-types/real-browser-monitor-type");
 const fsAsync = require("fs").promises;
@@ -43,7 +43,7 @@ function getGameList() {
 module.exports.generalSocketHandler = (socket, server) => {
     socket.on("initServerTimezone", async (timezone) => {
         try {
-            checkLogin(socket);
+            checkAdmin(socket);
             log.debug("generalSocketHandler", "Timezone: " + timezone);
             await Settings.set("initServerTimezone", true);
             await server.setTimezone(timezone);
@@ -70,7 +70,7 @@ module.exports.generalSocketHandler = (socket, server) => {
 
     socket.on("testChrome", (executable, callback) => {
         try {
-            checkLogin(socket);
+            checkAdmin(socket);
             // Just noticed that await call could block the whole socket.io server!!! Use pure promise instead.
             testChrome(executable)
                 .then((version) => {

@@ -2806,6 +2806,90 @@
                         </div>
                     </div>
 
+                    <template v-if="isEdit">
+                        <h2 class="mt-5 mb-2">{{ $t("Access") }}</h2>
+                        <div class="shadow-box big-padding mb-3">
+                            <p class="form-text">{{ $t("accessHelp") }}</p>
+                            <div class="row">
+                                <div class="col-md-6 mb-3">
+                                    <label class="form-label">{{ $t("View Access") }}</label>
+                                    <select v-model="accessVisibility" class="form-select">
+                                        <option value="">{{ $t("Owner only") }}</option>
+                                        <option value="viewer">{{ $t("All Viewers") }}</option>
+                                        <option value="editor">{{ $t("All Editors") }}</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <label class="form-label">{{ $t("Edit Access") }}</label>
+                                    <select v-model="accessEditAccess" class="form-select">
+                                        <option value="">{{ $t("Owner only") }}</option>
+                                        <option value="editor">{{ $t("All Editors") }}</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <label class="form-label">{{ $t("Direct user grants") }}</label>
+                            <div v-if="accessUsers.length === 0" class="form-text mb-2">
+                                {{ $t("No direct user grants") }}
+                            </div>
+                            <table v-else class="table table-borderless table-sm align-middle mb-2">
+                                <tbody>
+                                    <tr v-for="u in accessUsers" :key="u.user_id">
+                                        <td>{{ u.username }}</td>
+                                        <td style="width: 160px;">
+                                            <select v-model="u.level" class="form-select form-select-sm">
+                                                <option value="view">{{ $t("View") }}</option>
+                                                <option value="edit">{{ $t("Edit") }}</option>
+                                            </select>
+                                        </td>
+                                        <td style="width: 100px;">
+                                            <button
+                                                type="button"
+                                                class="btn btn-sm btn-outline-danger"
+                                                @click="removeAccessUser(u.user_id)"
+                                            >
+                                                {{ $t("Remove") }}
+                                            </button>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+
+                            <div class="d-flex gap-2">
+                                <select v-model="accessUserToAddId" class="form-select form-select-sm" style="max-width: 260px;">
+                                    <option value="">{{ $t("Select user...") }}</option>
+                                    <option
+                                        v-for="u in accessUserDirectory"
+                                        :key="u.id"
+                                        :value="u.id"
+                                        :disabled="accessUsers.some((a) => a.user_id === u.id)"
+                                    >
+                                        {{ u.username }}
+                                    </option>
+                                </select>
+                                <select v-model="accessUserToAddLevel" class="form-select form-select-sm" style="max-width: 140px;">
+                                    <option value="view">{{ $t("View") }}</option>
+                                    <option value="edit">{{ $t("Edit") }}</option>
+                                </select>
+                                <button
+                                    type="button"
+                                    class="btn btn-sm btn-outline-primary"
+                                    :disabled="!accessUserToAddId"
+                                    @click="addAccessUser"
+                                >
+                                    {{ $t("Add") }}
+                                </button>
+                                <button
+                                    type="button"
+                                    class="btn btn-sm btn-primary ms-auto"
+                                    @click="saveMonitorPermissions"
+                                >
+                                    {{ $t("Save Access") }}
+                                </button>
+                            </div>
+                        </div>
+                    </template>
+
                     <div class="fixed-bottom-bar p-3">
                         <button
                             id="monitor-submit-btn"
@@ -2986,6 +3070,12 @@ export default {
                 confirmed: false,
                 editedValue: false,
             },
+            accessVisibility: "",
+            accessEditAccess: "",
+            accessUsers: [],
+            accessUserDirectory: [],
+            accessUserToAddId: "",
+            accessUserToAddLevel: "view",
         };
     },
 
@@ -3656,6 +3746,12 @@ message HealthCheckResponse {
                                 this.monitor.timeout = ~~(this.monitor.interval * 8) / 10;
                             }
                         }
+
+                        // Load access permissions (edit only, not clone)
+                        if (this.isEdit) {
+                            this.loadMonitorPermissions();
+                            this.loadUsersForPermissions();
+                        }
                     } else {
                         this.$root.toastError(res.msg);
                     }
@@ -3663,6 +3759,63 @@ message HealthCheckResponse {
             }
 
             this.draftGroupName = null;
+        },
+
+        loadMonitorPermissions() {
+            this.$root.getSocket().emit("getMonitorPermissions", this.$route.params.id, (res) => {
+                if (res.ok) {
+                    this.accessVisibility = res.permissions.visibility || "";
+                    this.accessEditAccess = res.permissions.edit_access || "";
+                    this.accessUsers = res.permissions.users.map((u) => ({
+                        user_id: u.user_id,
+                        username: u.username,
+                        level: u.level,
+                    }));
+                }
+            });
+        },
+
+        loadUsersForPermissions() {
+            this.$root.getSocket().emit("listUsersForPermissions", (res) => {
+                if (res.ok) {
+                    this.accessUserDirectory = res.users;
+                }
+            });
+        },
+
+        addAccessUser() {
+            const userId = Number(this.accessUserToAddId);
+            if (!userId) {
+                return;
+            }
+            if (this.accessUsers.find((u) => u.user_id === userId)) {
+                return;
+            }
+            const found = this.accessUserDirectory.find((u) => u.id === userId);
+            if (!found) {
+                return;
+            }
+            this.accessUsers.push({
+                user_id: userId,
+                username: found.username,
+                level: this.accessUserToAddLevel,
+            });
+            this.accessUserToAddId = "";
+        },
+
+        removeAccessUser(userId) {
+            this.accessUsers = this.accessUsers.filter((u) => u.user_id !== userId);
+        },
+
+        saveMonitorPermissions() {
+            const payload = {
+                visibility: this.accessVisibility || null,
+                edit_access: this.accessEditAccess || null,
+                users: this.accessUsers.map((u) => ({ user_id: u.user_id, level: u.level })),
+            };
+            this.$root.getSocket().emit("setMonitorPermissions", this.monitor.id, payload, (res) => {
+                this.$root.toastRes(res);
+            });
         },
 
         addKafkaProducerBroker(newBroker) {

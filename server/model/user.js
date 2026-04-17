@@ -4,7 +4,24 @@ const { R } = require("redbean-node");
 const jwt = require("jsonwebtoken");
 const { shake256, SHAKE256_LENGTH } = require("../util-server");
 
+const VALID_ROLES = [ "admin", "editor", "viewer" ];
+
 class User extends BeanModel {
+    /**
+     * Public representation (no password hash, no 2FA secret)
+     * @returns {object} Public user data
+     */
+    toPublicJSON() {
+        return {
+            id: this.id,
+            username: this.username,
+            role: this.role || "viewer",
+            active: !!this.active,
+            timezone: this.timezone,
+            twofa_status: !!this.twofa_status,
+        };
+    }
+
     /**
      * Reset user password
      * Fix #1510, as in the context reset-password.js, there is no auto model mapping. Call this static function instead.
@@ -50,3 +67,4 @@ class User extends BeanModel {
 }
 
 module.exports = User;
+module.exports.VALID_ROLES = VALID_ROLES;

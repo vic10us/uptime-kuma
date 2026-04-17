@@ -1,4 +1,4 @@
-const { checkLogin } = require("../util-server");
+const { checkEditor } = require("../util-server");
 const { Proxy } = require("../proxy");
 const { sendProxyList } = require("../client");
 const { UptimeKumaServer } = require("../uptime-kuma-server");
@@ -12,9 +12,9 @@ const server = UptimeKumaServer.getInstance();
 module.exports.proxySocketHandler = (socket) => {
     socket.on("addProxy", async (proxy, proxyID, callback) => {
         try {
-            checkLogin(socket);
+            checkEditor(socket);
 
-            const proxyBean = await Proxy.save(proxy, proxyID, socket.userID);
+            const proxyBean = await Proxy.save(proxy, proxyID, socket.userID, { isAdmin: socket.userRole === "admin" });
             await sendProxyList(socket);
 
             if (proxy.applyExisting) {
@@ -38,9 +38,9 @@ module.exports.proxySocketHandler = (socket) => {
 
     socket.on("deleteProxy", async (proxyID, callback) => {
         try {
-            checkLogin(socket);
+            checkEditor(socket);
 
-            await Proxy.delete(proxyID, socket.userID);
+            await Proxy.delete(proxyID, socket.userID, { isAdmin: socket.userRole === "admin" });
             await sendProxyList(socket);
             await Proxy.reloadProxy();
 

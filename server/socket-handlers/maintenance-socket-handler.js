@@ -1,4 +1,4 @@
-const { checkLogin } = require("../util-server");
+const { checkLogin, checkEditor } = require("../util-server");
 const { log } = require("../../src/util");
 const { R } = require("redbean-node");
 const apicache = require("../modules/apicache");
@@ -15,7 +15,7 @@ module.exports.maintenanceSocketHandler = (socket) => {
     // Add a new maintenance
     socket.on("addMaintenance", async (maintenance, callback) => {
         try {
-            checkLogin(socket);
+            checkEditor(socket);
 
             log.debug("maintenance", maintenance);
 
@@ -45,11 +45,11 @@ module.exports.maintenanceSocketHandler = (socket) => {
     // Edit a maintenance
     socket.on("editMaintenance", async (maintenance, callback) => {
         try {
-            checkLogin(socket);
+            checkEditor(socket);
 
             let bean = server.getMaintenance(maintenance.id);
 
-            if (bean.user_id !== socket.userID) {
+            if (socket.userRole !== "admin" && bean.user_id !== socket.userID) {
                 throw new Error("Permission denied.");
             }
 
@@ -76,7 +76,7 @@ module.exports.maintenanceSocketHandler = (socket) => {
     // Add a new monitor_maintenance
     socket.on("addMonitorMaintenance", async (maintenanceID, monitors, callback) => {
         try {
-            checkLogin(socket);
+            checkEditor(socket);
 
             await R.exec("DELETE FROM monitor_maintenance WHERE maintenance_id = ?", [maintenanceID]);
 
@@ -108,7 +108,7 @@ module.exports.maintenanceSocketHandler = (socket) => {
     // Add a new monitor_maintenance
     socket.on("addMaintenanceStatusPage", async (maintenanceID, statusPages, callback) => {
         try {
-            checkLogin(socket);
+            checkEditor(socket);
 
             await R.exec("DELETE FROM maintenance_status_page WHERE maintenance_id = ?", [maintenanceID]);
 
@@ -143,7 +143,9 @@ module.exports.maintenanceSocketHandler = (socket) => {
 
             log.debug("maintenance", `Get Maintenance: ${maintenanceID} User ID: ${socket.userID}`);
 
-            let bean = await R.findOne("maintenance", " id = ? AND user_id = ? ", [maintenanceID, socket.userID]);
+            let bean = socket.userRole === "admin"
+                ? await R.findOne("maintenance", " id = ? ", [maintenanceID])
+                : await R.findOne("maintenance", " id = ? AND user_id = ? ", [maintenanceID, socket.userID]);
 
             callback({
                 ok: true,
@@ -223,7 +225,7 @@ module.exports.maintenanceSocketHandler = (socket) => {
 
     socket.on("deleteMaintenance", async (maintenanceID, callback) => {
         try {
-            checkLogin(socket);
+            checkEditor(socket);
 
             log.debug("maintenance", `Delete Maintenance: ${maintenanceID} User ID: ${socket.userID}`);
 
@@ -232,7 +234,11 @@ module.exports.maintenanceSocketHandler = (socket) => {
                 delete server.maintenanceList[maintenanceID];
             }
 
-            await R.exec("DELETE FROM maintenance WHERE id = ? AND user_id = ? ", [maintenanceID, socket.userID]);
+            if (socket.userRole === "admin") {
+                await R.exec("DELETE FROM maintenance WHERE id = ? ", [maintenanceID]);
+            } else {
+                await R.exec("DELETE FROM maintenance WHERE id = ? AND user_id = ? ", [maintenanceID, socket.userID]);
+            }
 
             apicache.clear();
 
@@ -253,7 +259,7 @@ module.exports.maintenanceSocketHandler = (socket) => {
 
     socket.on("pauseMaintenance", async (maintenanceID, callback) => {
         try {
-            checkLogin(socket);
+            checkEditor(socket);
 
             log.debug("maintenance", `Pause Maintenance: ${maintenanceID} User ID: ${socket.userID}`);
 
@@ -261,6 +267,10 @@ module.exports.maintenanceSocketHandler = (socket) => {
 
             if (!maintenance) {
                 throw new Error("Maintenance not found");
+            }
+
+            if (socket.userRole !== "admin" && maintenance.user_id !== socket.userID) {
+                throw new Error("Permission denied.");
             }
 
             maintenance.active = false;
@@ -286,7 +296,7 @@ module.exports.maintenanceSocketHandler = (socket) => {
 
     socket.on("resumeMaintenance", async (maintenanceID, callback) => {
         try {
-            checkLogin(socket);
+            checkEditor(socket);
 
             log.debug("maintenance", `Resume Maintenance: ${maintenanceID} User ID: ${socket.userID}`);
 
@@ -294,6 +304,10 @@ module.exports.maintenanceSocketHandler = (socket) => {
 
             if (!maintenance) {
                 throw new Error("Maintenance not found");
+            }
+
+            if (socket.userRole !== "admin" && maintenance.user_id !== socket.userID) {
+                throw new Error("Permission denied.");
             }
 
             maintenance.active = true;
